@@ -1,0 +1,132 @@
+import type { AppInitConfig } from './AppInitConfig.js';
+import { createModuleRunner, type ModuleRunner } from './ModuleRunner.js';
+import { createWindowManagerModule } from './modules/WindowManager.js';
+import { allowInternalOrigins } from './modules/BlockNotAllowdOrigins.js';
+import { allowExternalUrls } from './modules/ExternalUrls.js';
+import { createConfigModule } from './modules/ConfigModule.js';
+import { createOSModule } from './modules/OSModule.js';
+import { createNotificationModule } from './modules/NotificationModule.js';
+import { createWindowControlModule } from './modules/WindowControlModule.js';
+import { createLoggingModule } from './modules/LoggingModule.js';
+import { createDialogModule } from './modules/DialogModule.js';
+import { createClipboardModule } from './modules/ClipboardModule.js';
+import { createContextMenuModule } from './modules/ContextMenuModule.js';
+import { createAppMenuModule } from './modules/AppMenuModule.js';
+import { createHttpModule } from './modules/HttpModule.js';
+import { createEnhancedSecurityModule } from './modules/EnhancedSecurityModule.js';
+import { createHomeConfigModule } from './modules/HomeConfigModule.js';
+import { createAppIconModule } from './modules/AppIconModule.js';
+import { createShellModule } from './modules/ShellModule.js';
+import { app, protocol } from 'electron';
+import { Logger } from './logging/logging.js';
+import { migrateConfig } from './modules/MigrationModule.js';
+
+// GPU acceleration flags — must be set before app.whenReady()
+// Electron's GPU process spawns as a zygote child that doesn't inherit
+// --ozone-platform=wayland or DRM features (electron/electron#50455).
+// --no-zygote disables the zygote process pool, forcing each child process
+// to be spawned fresh with the full command line including GPU flags.
+// This trades startup speed for correct GPU flag propagation.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('no-zygote');
+app.commandLine.appendSwitch(
+  'enable-features',
+  'AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL,' +
+    'VaapiVideoDecoder,VaapiVideoEncoder,VaapiOnNvidiaGPUs,' +
+    'AcceleratedVideoEncoder,CanvasOopRasterization,',
+);
+
+// https://github.com/tak0dan/SunshineOS/discussions/t/48396
+app.commandLine.appendSwitch('disable-vulkan');
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app-icon',
+    privileges: {
+      secure: true,
+      standard: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
+
+export async function initApp(initConfig: AppInitConfig) {
+  const logger = Logger.getInstance();
+
+  if (process.getuid && process.getuid() === 0) {
+    logger.error('The application should not be run as root. Exiting.');
+    app.quit();
+    return;
+  }
+
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    logger.debug('Second instance detected, exiting.');
+    app.quit();
+    return;
+  }
+
+  await migrateConfig();
+
+  const isDevelopment = import.meta.env.DEV;
+
+  // Shut the fuck up, thank you.
+  process.env.ELECTRON_NO_ATTACH_CONSOLE = '1';
+
+  try {
+    await registerBackgroundIPCHandlers(app, logger);
+
+    const moduleRunner: ModuleRunner = createModuleRunner()
+      .init(createEnhancedSecurityModule(isDevelopment))
+      .init(createAppIconModule())
+
+      .init(allowInternalOrigins(new Set(initConfig.renderer instanceof URL ? [initConfig.renderer.origin] : [])))
+      .init(allowExternalUrls(new Set(initConfig.renderer instanceof URL ? ['tak0dan.github.io/sunshineos-site'] : [])))
+
+      .init(
+        createWindowManagerModule({
+          initConfig,
+          openDevTools: isDevelopment,
+          isDevelopment,
+        }),
+      );
+
+    await moduleRunner;
+  } catch (error) {
+    logger.error(`Failed to initialize app: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
+  }
+}
+
+async function registerBackgroundIPCHandlers(app: Electron.App, logger: Logger) {
+  try {
+    const modules = [
+      createLoggingModule(),
+      createConfigModule(),
+      createOSModule(),
+      createNotificationModule(),
+      createWindowControlModule(),
+      createDialogModule(),
+      createClipboardModule(),
+      createContextMenuModule(),
+      createAppMenuModule(),
+      createHttpModule(),
+      createHomeConfigModule(),
+      createShellModule(),
+    ];
+
+    const moduleContext = { app };
+
+    await Promise.all(modules.map((m) => Promise.resolve(m.enable(moduleContext))));
+
+    logger.debug('Background IPC handlers registered successfully');
+  } catch (error) {
+    logger.error(
+      `Failed to register background IPC handlers: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}

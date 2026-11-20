@@ -1,0 +1,113 @@
+import { ChangeDetectorRef, Component, effect, inject, signal, viewChild } from '@angular/core';
+import { OsInteractService } from '../task-manager/os-interact.service';
+import type { StatefulPackage } from '../gaming/interfaces';
+import { Tab, TabList, Tabs } from '@openng/optimus-ui/tabs';
+import { TranslocoDirective } from '@jsverse/transloco';
+import { Logger } from '../../logging/logging';
+import { ButtonDirective } from '@openng/optimus-ui/button';
+import { ElectronShellService } from '../../electron-services';
+import { IconField } from '@openng/optimus-ui/iconfield';
+import { InputIcon } from '@openng/optimus-ui/inputicon';
+import { InputText } from '@openng/optimus-ui/inputtext';
+import { type Table, TableModule } from '@openng/optimus-ui/table';
+import { Checkbox } from '@openng/optimus-ui/checkbox';
+import { FormsModule } from '@angular/forms';
+import { PackagesService } from './packages.service';
+import { ConfigService } from '../config/config.service';
+
+@Component({
+  selector: 'toolbox-packages',
+  imports: [
+    Tab,
+    TabList,
+    Tabs,
+    TranslocoDirective,
+    ButtonDirective,
+    IconField,
+    InputIcon,
+    InputText,
+    TableModule,
+    Checkbox,
+    FormsModule,
+    ButtonDirective,
+  ],
+  templateUrl: './packages.component.html',
+  styleUrl: './packages.component.css',
+})
+export class PackagesComponent {
+  readonly tabIndex = signal<number>(0);
+  readonly packageSearch = signal<string>('');
+
+  readonly table = viewChild.required<Table>('packageTable');
+
+  protected readonly configService = inject(ConfigService);
+  protected readonly packagesService = inject(PackagesService);
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly logger = Logger.getInstance();
+  private readonly osInteractService = inject(OsInteractService);
+  protected readonly shellService = inject(ElectronShellService);
+
+  constructor() {
+    effect(() => {
+      this.osInteractService.packages();
+      if (!this.packagesService.loading()) {
+        void this.updateUi();
+      }
+    });
+  }
+
+  /**
+   * Get the source path for an icon.
+   * @param item The package entry.
+   */
+  getIconSrc(item: StatefulPackage): string {
+    const pkgname = item.pkgname[0]?.replace(/-(bin|git)$/, '');
+    if (pkgname) {
+      return `app-icon://package/${pkgname}`;
+    }
+    return 'app-icon://unknown';
+  }
+
+  /**
+   * Update the state of the UI based on the installed packages.
+   */
+  async updateUi(): Promise<void> {
+    this.logger.trace('Updating packages UI');
+
+    const installedPackages: Map<string, boolean> = this.osInteractService.packages();
+    const currentPackages = this.packagesService.packages();
+
+    for (const sections of currentPackages) {
+      for (const pkg of sections.sections) {
+        pkg.selected = installedPackages.get(pkg.pkgname[0]) === true;
+      }
+    }
+    this.packagesService.packages.set(currentPackages);
+  }
+
+  /**
+   * Toggles the selected state of a package.
+   * @param item The package to toggle.
+   */
+  togglePackage(item: StatefulPackage): void {
+    for (const pkgname of item.pkgname) {
+      this.osInteractService.togglePackage(pkgname);
+    }
+  }
+
+  /**
+   * Clear the systemd service table search and options.
+   * @param table The table component to clear
+   */
+  clear(table: any): void {
+    table.clear();
+    this.packageSearch.set('');
+  }
+
+  /**
+   * Reset page to 0, because this doesn't happen automatically.
+   */
+  tabChange() {
+    this.table().first = 0;
+  }
+}

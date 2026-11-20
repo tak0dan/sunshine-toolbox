@@ -1,0 +1,82 @@
+{
+  "name": "sunshine-toolbox",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sunshine Toolbox - graphical maintenance and repair tools for Sunshine OS",
+  "keywords": [
+    "sunshine",
+    "sunshineos",
+    "linux",
+    "system",
+    "maintenance",
+    "tools",
+    "arch",
+    "toolbox"
+  ],
+  "homepage": "https://github.com/tak0dan/sunshine-toolbox#readme",
+  "bugs": {
+    "url": "https://github.com/tak0dan/sunshine-toolbox/issues"
+  },
+  "license": "GPL-3.0-or-later",
+  "author": {
+    "name": "tak0dan",
+    "email": "tmtroshko@gmail.com"
+  },
+  "maintainers": [
+    "tak0dan"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tak0dan/sunshine-toolbox.git"
+  },
+  "type": "module",
+  "main": "packages/entry-point.mjs",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "check-bundle": "asar list dist/linux-unpacked/resources/app.asar",
+    "check-bundle-mac": "asar list dist/mac-arm64/sunshine-toolbox.app/Contents/Resources/app.asar",
+    "check-pkglists": "pnpx tsx assets/test-package-availability.ts",
+    "compile": "pnpm run build && pnpm run electron-builder",
+    "dev": "node packages/dev-mode.mjs",
+    "electron-builder": "electron-builder build --config electron-builder.mjs --publish never",
+    "format": "prettier --write .",
+    "sync-wiki": "pnpx tsx assets/parse-arch-wiki.ts",
+    "sync-setup": "pnpx tsx assets/sync-setup-wizard-i18n.ts && pnpx tsx assets/parse-arch-wiki.ts --local --setup",
+    "sync-gaming": "pnpx tsx assets/parse-arch-wiki.ts --local --gaming",
+    "test": "playwright test ./tests/e2e.spec.ts",
+    "typegen": "tsc packages/**/*.js --moduleResolution NodeNext --module NodeNext --declaration --allowJs --emitDeclarationOnly --outDir types"
+  },
+  "dependencies": {
+    "@app/main": "workspace:*",
+    "@app/preload": "workspace:*",
+    "@app/renderer": "workspace:*"
+  },
+  "devDependencies": {
+    "@angular-eslint/eslint-plugin": "^22.2.0",
+    "@electron-toolkit/eslint-config": "^2.1.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/emoji-js": "^3.5.2",
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^26.4.1",
+    "@types/pako": "^3.0.0",
+    "angular-eslint": "^22.2.0",
+    "electron": "43.3.0",
+    "electron-builder": "26.15.3",
+    "eslint": "^10.9.1",
+    "eslint-plugin-oxlint": "^1.81.0",
+    "glob": "^13.0.6",
+    "oxfmt": "^0.66.0",
+    "oxlint": "^1.81.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "typescript": "catalog:",
+    "typescript-eslint": "^8.69.0",
+    "vite": "catalog:"
+  },
+  "engines": {
+    "node": ">=26.0.0",
+    "pnpm": ">=12.0.0"
+  },
+  "packageManager": "pnpm@12.3.4+sha512.961aa41fb077da3a04a441d9f8e15ebc0c96da8ef710b2eb67bf9ee7cb0610eabd48f1fd85f51cffe73846785fa0f87c56a3a872a1d893f8446741b5cce45457"
+}

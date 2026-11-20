@@ -1,0 +1,47 @@
+# Maintainer: tak0dan <tmtroshko@gmail.com>
+pkgname=sunshine-toolbox
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Graphical maintenance and repair toolkit for Sunshine OS"
+arch=('x86_64')
+url="https://github.com/tak0dan/sunshine-toolbox"
+license=('GPL-3.0-or-later')
+depends=('electron' 'sunshine-base' 'sunshine-tools' 'pacman-contrib')
+makedepends=('nodejs' 'pnpm')
+optdepends=('paru: AUR package support')
+options=('!strip' '!debug')
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/tak0dan/sunshine-toolbox/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  pnpm install --frozen-lockfile
+  pnpm run build
+  pnpm exec electron-builder build --config electron-builder.mjs --publish never --linux dir
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+
+  install -dm755 "${pkgdir}/usr/lib/${pkgname}"
+  cp -a dist/linux-unpacked/. "${pkgdir}/usr/lib/${pkgname}/"
+
+  sed -e "s/@appname@/${pkgname}/g" -e "s/@runname@/${pkgname}/g" \
+    assets/sunshine-toolbox.sh > "${srcdir}/sunshine-toolbox-launcher"
+  install -Dm755 "${srcdir}/sunshine-toolbox-launcher" "${pkgdir}/usr/bin/${pkgname}"
+
+  install -Dm644 assets/sunshine-toolbox.desktop \
+    "${pkgdir}/usr/share/applications/${pkgname}.desktop"
+  install -Dm644 assets/org.sunshineos.toolbox.policy \
+    "${pkgdir}/usr/share/polkit-1/actions/org.sunshineos.toolbox.policy"
+  install -Dm755 assets/sunshine-toolbox-pty-wrapper \
+    "${pkgdir}/usr/libexec/${pkgname}-pty-wrapper"
+
+  install -Dm644 assets/images/sunshine.svg \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/${pkgname}.svg"
+  install -Dm644 buildResources/icon.png \
+    "${pkgdir}/usr/share/icons/hicolor/256x256/apps/${pkgname}.png"
+
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 NOTICE "${pkgdir}/usr/share/licenses/${pkgname}/NOTICE"
+}

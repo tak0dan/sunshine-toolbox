@@ -1,0 +1,19 @@
+Sunshine Toolbox
+================
+
+This project is a derivative work of Garuda Toolbox:
+
+  Upstream:  https://gitlab.com/garuda-linux/applications/toolbox
+  Upstream authors: Garuda Linux contributors
+  Upstream license: GPL-3.0-or-later
+
+The upstream source was forked, renamed, and adapted for Sunshine OS. Changes include:
+  - Rebranding of all text, icons, themes and desktop/polkit metadata to Sunshine OS
+  - Replacement of @garudalinux/core and @garudalinux/themes with local Sunshine modules
+  - Rewiring of all system commands to the sunshine-* command suite
+  - Sunshine OS palette, logo, launcher and packaging
+
+The GNU General Public License version 3 (see LICENSE) continues to apply to the whole
+work. Original copyright notices in the source files are preserved where present.
+
+Sunshine-specific changes Copyright (C) 2026 tak0dan <tmtroshko@gmail.com>.

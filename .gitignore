@@ -1,0 +1,51 @@
+# Compiled output
+**/dist
+**/tmp
+**/out-tsc
+/src
+
+# Node
+**/node_modules
+
+# IDEs and editors
+.idea/
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/mcp.json
+.history/*
+
+# Miscellaneous
+/.angular/cache
+.sass-cache/
+/connect.lock
+/coverage
+/libpeerconnection.log
+testem.log
+/typings
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+*.js.map
+.direnv
+.pre-commit-config.yaml
+.treefmt.toml
+core
+flake.lock
+/test
+
+# Secrets
+.env

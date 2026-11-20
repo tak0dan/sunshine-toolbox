@@ -1,0 +1,98 @@
+<ng-container *transloco="let t">
+  <div class="setup-wizard-wrap surface-section px-4 py-4 text-center md:px-6 lg:px-8">
+    <div class="setup-wizard-title mb-5 shrink-0 text-3xl font-bold">
+      <span class="text-primary">{{ t('setupWizard.title') }} </span>
+    </div>
+
+    <p-card class="mt-4 text-left">
+      <p-tabs [value]="activeTab()" (valueChange)="onTabChange($event)">
+        <p-tablist>
+          @for (category of softwareCategories; track category.id; let i = $index) {
+            <p-tab [value]="getCategoryStepValue(i)">{{ t(category.name) }}</p-tab>
+          }
+        </p-tablist>
+
+        <p-tabpanels>
+          @for (category of softwareCategories; track category.id; let i = $index) {
+            <p-tabpanel [value]="getCategoryStepValue(i)">
+              <div class="setup-step-content flex flex-col gap-4 py-4">
+                <div class="flex-none">
+                  <div class="text-2xl font-bold">{{ t(category.name) }}</div>
+                  <div class="text-lg text-color-secondary">
+                    {{ t('setupWizard.softwareSelection.body') }}
+                  </div>
+                </div>
+
+                <div class="software-grid-container grow">
+                  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-left">
+                    @for (item of category.items; track item.id) {
+                      <div
+                        class="flex items-center gap-4 p-4 surface-card border-round cursor-pointer transition-colors duration-200"
+                        (keydown)="toggleSoftware(item)"
+                        (click)="toggleSoftware(item)"
+                        tabindex="0"
+                      >
+                        <div class="shrink-0 pointer-events-none">
+                          <p-checkbox [binary]="true" [ngModel]="isItemSelected(item)" [readonly]="true" />
+                        </div>
+                        <div class="shrink-0 w-12 h-12 flex items-center justify-center overflow-hidden">
+                          <img class="w-10 h-10 object-contain" [src]="getIconSrc(item)" [alt]="item.name" />
+                        </div>
+                        <div class="grow text-left">
+                          <div class="font-bold text-lg">{{ item.name }}</div>
+                          <div class="text-sm text-color-secondary line-clamp-2" [title]="t(item.description)">
+                            {{ t(item.description) }}
+                          </div>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                </div>
+
+                <div class="flex-none flex gap-2 pt-4">
+                  <button
+                    [disabled]="i === 0"
+                    pButton
+                    severity="secondary"
+                    (click)="goToStep(getCategoryStepValue(i - 1))"
+                  >
+                    <i class="pi pi-arrow-left"></i> {{ t('setupWizard.buttons.back') }}
+                  </button>
+                  @if (i < softwareCategories.length - 1) {
+                    <button pButton (click)="goToStep(getCategoryStepValue(i + 1))">
+                      <i class="pi pi-arrow-right"></i>{{ t('setupWizard.buttons.next') }}
+                    </button>
+                  }
+                </div>
+              </div>
+            </p-tabpanel>
+          }
+        </p-tabpanels>
+      </p-tabs>
+
+      <div class="apply-section mt-4 flex-none flex flex-col gap-2 border-t border-t-primary pt-4">
+        @if (executionFailed()) {
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <div class="font-bold text-red-500">{{ t('setupWizard.apply.failedHeader') }}</div>
+              <p class="text-color-secondary text-sm">{{ t('setupWizard.apply.failedBody') }}</p>
+            </div>
+            <button [disabled]="taskManagerService.running()" pButton severity="warn" (click)="apply()">
+              <i class="pi pi-refresh"></i> {{ t('setupWizard.buttons.retry') }}
+            </button>
+          </div>
+        } @else {
+          <div class="flex items-center justify-between gap-4">
+            <div>
+              <div class="font-bold">{{ t('setupWizard.apply.header') }}</div>
+              <p class="text-color-secondary text-sm">{{ t('setupWizard.apply.body') }}</p>
+            </div>
+            <button [disabled]="taskManagerService.running()" pButton severity="success" (click)="apply()">
+              <i class="pi pi-check"></i> {{ t('setupWizard.buttons.apply') }}
+            </button>
+          </div>
+        }
+      </div>
+    </p-card>
+  </div>
+</ng-container>

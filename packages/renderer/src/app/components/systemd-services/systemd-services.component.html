@@ -1,0 +1,185 @@
+<ng-container *transloco="let t">
+  <p-table
+    #serviceTable
+    [globalFilterFields]="['unit', 'active', 'description', 'load', 'sub']"
+    [loading]="loading()"
+    [paginator]="true"
+    [rowsPerPageOptions]="[15, 30, 50]"
+    [rows]="15"
+    [value]="filteredServices()"
+    dataKey="unit"
+    sortField="unit"
+  >
+    <ng-template #caption>
+      <div class="flex">
+        <button class="mr-2.5" [outlined]="true" pButton (click)="toggleRefresh()">
+          <i [class]="'pi pi-' + (configService.settings().autoRefresh ? 'stop' : 'refresh')"></i>
+          {{ t('systemdServices.autoRefresh') }}
+        </button>
+        <button class="mr-2.5" [outlined]="true" pButton (click)="toggleContext()">
+          <i [class]="'pi pi-' + (configService.settings().systemdUserContext ? 'server' : 'user')"></i>
+          {{
+            configService.settings().systemdUserContext
+              ? t('systemdServices.systemContext')
+              : t('systemdServices.userContext')
+          }}
+        </button>
+        <button class="mr-2.5" [outlined]="true" pButton (click)="toggleDisabled()">
+          <i [class]="'pi pi-' + (includeDisabled() ? 'filter' : 'filter-slash')"></i>
+          {{ includeDisabled() ? t('systemdServices.excludeDisabled') : t('systemdServices.includeDisabled') }}
+        </button>
+        <button
+          class="mr-2.5"
+          [pTooltip]="t('systemdServices.hideDeadTip')"
+          [tooltipOptions]="{ appendTo: 'body', tooltipPosition: 'bottom' }"
+          [outlined]="true"
+          pButton
+          (click)="toggleHideDead()"
+        >
+          <i [class]="'pi pi-' + (hideDead() ? 'eye' : 'eye-slash')"></i>
+          {{ hideDead() ? t('systemdServices.showAll') : t('systemdServices.hideDead') }}
+        </button>
+        <button [outlined]="true" pButton (click)="clear(serviceTable)">
+          <i class="pi pi-filter-slash"></i> {{ t('systemdServices.clear') }}
+        </button>
+        <p-iconfield class="ml-auto" iconPosition="left">
+          <p-inputicon>
+            <i class="pi pi-search"></i>
+          </p-inputicon>
+          <input
+            #filterInput
+            [placeholder]="t('systemdServices.searchKey')"
+            (input)="serviceTable.filterGlobal(filterInput.value, 'contains')"
+            pInputText
+            type="text"
+          />
+        </p-iconfield>
+      </div>
+    </ng-template>
+    <ng-template #header>
+      <tr>
+        <th class="whitespace-nowrap" pSortableColumn="unit">
+          {{ t('systemdServices.unit') }}
+          <p-sortIcon field="unit" />
+        </th>
+        <th class="whitespace-nowrap" pSortableColumn="description">
+          {{ t('systemdServices.description') }}
+          <p-sortIcon field="description" />
+        </th>
+        <th class="whitespace-nowrap" pSortableColumn="load">
+          {{ t('systemdServices.load') }}
+          <p-sortIcon field="load" />
+        </th>
+        <th class="whitespace-nowrap" pSortableColumn="sub">
+          {{ t('systemdServices.state') }}
+          <p-sortIcon field="sub" />
+        </th>
+        <th class="whitespace-nowrap" pSortableColumn="active">
+          {{ t('systemdServices.active') }}
+          <p-sortIcon field="active" />
+        </th>
+        <th>
+          <div class="flex items-center whitespace-nowrap">
+            {{ t('systemdServices.actions') }}
+          </div>
+        </th>
+      </tr>
+    </ng-template>
+    <ng-template #body let-service>
+      <tr>
+        <td>
+          <p
+            [pTooltip]="service.tooltip ? service.tooltip : undefined"
+            [tooltipOptions]="{ appendTo: 'body', tooltipPosition: 'bottom' }"
+          >
+            {{ service.unit }}
+          </p>
+        </td>
+        <td>
+          {{ service.description }}
+        </td>
+        <td>
+          {{ service.sub }}
+        </td>
+        <td>
+          {{ service.load }}
+        </td>
+        <td class="text-center">
+          <i
+            class="pi"
+            [class]="{
+              'pi-check-circle text-green-500': service.active === 'active',
+              'pi-times-circle text-red-500': service.active !== 'active',
+            }"
+          ></i>
+        </td>
+        <td>
+          <button [outlined]="true" pButton (click)="openPopover($event, op, service)">
+            <i class="pi pi-power-off"></i> {{ t('systemdServices.show') }}
+          </button>
+        </td>
+      </tr>
+    </ng-template>
+    <ng-template #emptymessage>
+      <tr>
+        <td colspan="7">{{ t('systemdServices.notFound') }}</td>
+      </tr>
+    </ng-template>
+  </p-table>
+
+  <p-popover #op>
+    <div>
+      <button
+        class="mx-2.5"
+        [disabled]="activeService()?.sub === 'running'"
+        [outlined]="true"
+        pButton
+        (click)="executeAction('start')"
+      >
+        <i class="pi pi-play"></i> {{ t('systemdServices.start') }}
+      </button>
+      <button
+        class="mx-2.5"
+        [disabled]="activeService()?.sub === 'dead'"
+        [outlined]="true"
+        pButton
+        (click)="executeAction('stop')"
+      >
+        <i class="pi pi-stop"></i> {{ t('systemdServices.stop') }}
+      </button>
+      <button class="mx-2.5" [outlined]="true" pButton (click)="executeAction('restart')">
+        <i class="pi pi-refresh"></i> {{ t('systemdServices.restart') }}
+      </button>
+      <button class="mx-2.5" [outlined]="true" pButton (click)="executeAction('reload')">
+        <i class="pi pi-refresh"></i> {{ t('systemdServices.reload') }}
+      </button>
+      <button
+        class="mx-2.5"
+        [disabled]="activeService()?.sub === 'running'"
+        [outlined]="true"
+        pButton
+        (click)="executeAction('enable')"
+      >
+        <i class="pi pi-power-off"></i> {{ t('systemdServices.enable') }}
+      </button>
+      <button
+        class="mx-2.5"
+        [disabled]="activeService()?.sub === 'dead'"
+        [outlined]="true"
+        pButton
+        (click)="executeAction('disable')"
+      >
+        <i class="pi pi-power-off"></i> {{ t('systemdServices.disable') }}
+      </button>
+      <button class="mx-2.5" [outlined]="true" pButton (click)="executeAction('mask')">
+        <i class="pi pi-ban"></i> {{ t('systemdServices.mask') }}
+      </button>
+      <button class="mx-2.5" [outlined]="true" pButton (click)="executeAction('unmask')">
+        <i class="pi pi-ban"></i> {{ t('systemdServices.unmask') }}
+      </button>
+      <button class="mx-2.5" [outlined]="true" pButton (click)="executeAction('logs')">
+        <i class="pi pi-refresh"></i> {{ t('systemdServices.logs') }}
+      </button>
+    </div>
+  </p-popover>
+</ng-container>

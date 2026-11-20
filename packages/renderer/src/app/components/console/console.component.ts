@@ -1,0 +1,281 @@
+import {
+  type AfterViewInit,
+  Component,
+  computed,
+  effect,
+  ElementRef,
+  HostListener,
+  inject,
+  model,
+  type OnDestroy,
+  type OnInit,
+  type Signal,
+  viewChild,
+} from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import type { ITerminalOptions, ITheme } from '@xterm/xterm';
+import { SunshineTerminalTheme } from '../../theme';
+import { type NgTerminal, NgTerminalModule } from 'ng-terminal';
+import { TranslocoDirective, TranslocoService } from '@jsverse/transloco';
+import { Dialog } from '@openng/optimus-ui/dialog';
+import { ProgressBar } from '@openng/optimus-ui/progressbar';
+import { Card } from '@openng/optimus-ui/card';
+import { ScrollPanel } from '@openng/optimus-ui/scrollpanel';
+import { Logger } from '../../logging/logging';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { ConfigService } from '../config/config.service';
+import { Subscription } from 'rxjs';
+import { TaskManagerService } from '../task-manager/task-manager.service';
+import { clear, writeText } from '../../electron-services';
+import { MessageToastService } from '../../sunshine-core/index.js';
+import { SunshineBin } from '../privatebin/privatebin';
+import { LoadingService } from '../loading-indicator/loading-indicator.service';
+import { TerminalThemeService } from './terminal-theme.service';
+import { FitAddon } from '@xterm/addon-fit';
+
+@Component({
+  selector: 'toolbox-console',
+  imports: [NgTerminalModule, TranslocoDirective, Dialog, ProgressBar, Card, ScrollPanel, NgTemplateOutlet],
+  templateUrl: './console.component.html',
+  styleUrl: './console.component.css',
+})
+export class ConsoleComponent implements OnInit, AfterViewInit, OnDestroy {
+  public readonly visible = model<boolean>(false);
+  private subscriptions: Subscription[] = [];
+  private notifiedReady = false;
+
+  readonly dialog = viewChild<Dialog>('dialog');
+  readonly term = viewChild<NgTerminal>('term');
+
+  protected readonly taskManagerService = inject(TaskManagerService);
+  private readonly configService = inject(ConfigService);
+  private readonly terminalThemeService = inject(TerminalThemeService);
+  private readonly sunshineBin = inject(SunshineBin);
+  private readonly loadingService = inject(LoadingService);
+  private readonly logger = Logger.getInstance();
+  private readonly messageToastService = inject(MessageToastService);
+  private readonly translocoService = inject(TranslocoService);
+
+  private fitAddon = new FitAddon();
+  private host = inject(ElementRef);
+  private observer: ResizeObserver | null = null;
+
+  readonly progressTracker = computed(() => {
+    const progress = this.taskManagerService.progress();
+    if (progress === null) {
+      return null;
+    }
+    const count = this.taskManagerService.count();
+    if (count <= 1) {
+      return (progress === 0 ? 0 : 100).toPrecision(1);
+    }
+    return (((progress - 1) / (count - 1)) * 100).toPrecision(1);
+  });
+  readonly xtermOptions: Signal<ITerminalOptions> = computed(() => {
+    let theme: ITheme = this.configService.settings().darkMode ? SunshineTerminalTheme.dark : SunshineTerminalTheme.light;
+    if (!this.configService.settings().activeTheme.includes('Sunshine Noon')) {
+      const isDarkMode = this.configService.settings().darkMode;
+      theme = this.terminalThemeService.getXtermTheme(isDarkMode);
+    }
+
+    return {
+      disableStdin: false,
+      scrollback: 10000,
+      convertEol: true,
+      theme: theme,
+    };
+  });
+
+  constructor() {
+    effect(() => {
+      const darkMode = this.configService.settings().darkMode;
+      const appTheme = this.configService.settings().activeTheme;
+      const term = this.term();
+      if (term?.underlying) {
+        let theme: ITheme = darkMode ? SunshineTerminalTheme.dark : SunshineTerminalTheme.light;
+        if (!appTheme.includes('Sunshine Noon')) {
+          theme = this.terminalThemeService.getXtermTheme(darkMode);
+        }
+        term.underlying.options.theme = theme;
+      }
+      this.logger.trace('Terminal theme switched via effect');
+    });
+
+    effect(() => {
+      const visible = this.visible();
+      const term = this.term();
+      if (visible && term?.underlying) {
+        this.notifiedReady = false;
+
+        this.focusTerminal();
+        setTimeout(() => this.focusTerminal(), 50);
+        setTimeout(() => this.focusTerminal(), 150);
+        setTimeout(() => this.focusTerminal(), 300);
+
+        const doFit = () => {
+          this.fitAddon.fit();
+          if (term.underlying && !this.notifiedReady) {
+            const cols = term.underlying.cols;
+            const rows = term.underlying.rows;
+            void this.taskManagerService.resizeActiveShell(cols, rows);
+            this.notifiedReady = true;
+            this.taskManagerService.notifyTerminalReady(cols, rows);
+            this.focusTerminal();
+          }
+        };
+
+        // Ensure dialog has fully rendered
+        setTimeout(doFit, 300);
+        setTimeout(doFit, 700);
+        setTimeout(doFit, 1200);
+      } else if (!visible) {
+        this.notifiedReady = false;
+      }
+    });
+  }
+
+  ngOnInit(): void {
+    this.subscriptions.push(
+      this.taskManagerService.events.subscribe((output: string) => {
+        if (output === 'show') this.visible.set(true);
+        else if (output === 'hide') this.visible.set(false);
+      }),
+    );
+
+    this.observer = new ResizeObserver(() => this.fitAddon.fit());
+    this.observer.observe(this.host.nativeElement);
+  }
+
+  async ngAfterViewInit() {
+    this.logger.debug('Terminal component initialized');
+    await this.loadXterm();
+
+    this.logger.trace('Subscribing to terminal output/clear emitter');
+    this.subscriptions.push(
+      this.taskManagerService.dataEvents.subscribe((output: string) => {
+        this.term()?.write(output);
+      }),
+    );
+    this.subscriptions.push(
+      this.taskManagerService.events.subscribe((output: string) => {
+        if (output === 'clear') this.term()?.underlying?.clear();
+      }),
+    );
+
+    const termInstance = this.term()?.underlying;
+    if (termInstance) {
+      this.taskManagerService.terminalCols = termInstance.cols;
+      this.taskManagerService.terminalRows = termInstance.rows;
+
+      termInstance.onResize((event) => {
+        void this.taskManagerService.resizeActiveShell(event.cols, event.rows);
+      });
+      if (termInstance.cols > 80 && termInstance.rows > 24) {
+        void this.taskManagerService.resizeActiveShell(termInstance.cols, termInstance.rows);
+      }
+      termInstance.onData((data: string) => {
+        void this.taskManagerService.writeRawToActiveShell(data);
+      });
+    }
+  }
+
+  ngOnDestroy(): void {
+    for (const sub of this.subscriptions) {
+      sub.unsubscribe();
+    }
+
+    this.observer?.unobserve(this.host.nativeElement);
+  }
+
+  @HostListener('keydown', ['$event'])
+  respondToKeydown(event: KeyboardEvent) {
+    if (event.ctrlKey) {
+      switch (event.key) {
+        case 'q':
+          this.visible.set(false);
+          break;
+        case 'c':
+          void this.copyToClipboard();
+          break;
+        case 'x':
+          this.clearCache();
+          break;
+        case 'e':
+          void this.taskManagerService.executeTasks();
+          break;
+        case 's':
+          void this.uploadLog();
+      }
+    }
+  }
+
+  /**
+   * Focus the terminal element.
+   */
+  focusTerminal(): void {
+    const term = this.term();
+    if (term?.underlying) {
+      term.underlying.focus();
+    }
+  }
+
+  /**
+   * Load the xterm terminal into the terminal div, and set up the terminal.
+   */
+  private async loadXterm(): Promise<void> {
+    const term = this.term();
+    if (!term) return;
+
+    term.underlying?.loadAddon(new WebLinksAddon());
+    term.underlying?.loadAddon(this.fitAddon);
+    term.underlying?.clear();
+
+    if (this.taskManagerService.data) {
+      this.logger.trace('Terminal output cleared, now writing to terminal');
+      term.write(this.taskManagerService.data);
+    }
+  }
+
+  /**
+   * Copy the current terminal output to the clipboard.
+   */
+  async copyToClipboard() {
+    await clear();
+    await writeText(this.taskManagerService.cachedData());
+
+    this.messageToastService.success(
+      this.translocoService.translate('console.copyToClipboardTitle'),
+      this.translocoService.translate('console.copyToClipboard'),
+    );
+  }
+
+  /**
+   * Clear the cached terminal output.
+   */
+  clearCache() {
+    this.taskManagerService.cachedData.set('');
+    this.messageToastService.success(
+      this.translocoService.translate('console.clearCachedDataTitle'),
+      this.translocoService.translate('console.clearCachedData'),
+    );
+  }
+
+  /**
+   * Upload the current terminal output to PrivateBin and copy the URL to the clipboard.
+   */
+  async uploadLog() {
+    this.logger.trace('Uploading output to PrivateBin');
+    this.loadingService.loadingOn();
+
+    const url: string = await this.sunshineBin.sendText(this.taskManagerService.cachedData());
+    this.logger.info(`Uploaded to ${url}`);
+
+    void writeText(url);
+    this.messageToastService.info(
+      this.translocoService.translate('diagnostics.success'),
+      this.translocoService.translate('diagnostics.uploadSuccess'),
+    );
+
+    this.loadingService.loadingOff();
+  }
+}

@@ -1,0 +1,141 @@
+<ng-container *transloco="let t">
+  <div class="surface-section px-4 text-center md:px-6 lg:px-8 mt-5">
+    <div class="text-3xl font-bold">
+      <span class="text-color">{{ t('configFiles.title') }} </span>
+      <span class="text-primary">{{ t('configFiles.titleTwo') }}</span>
+    </div>
+  </div>
+
+  <div class="p-10">
+    <p-table
+      #dt
+      [value]="configFiles()"
+      [globalFilterFields]="['name', 'path', 'description']"
+      rowGroupMode="subheader"
+      groupRowsBy="category"
+      dataKey="name"
+    >
+      <ng-template #caption>
+        <div class="flex justify-end">
+          <p-iconfield class="ml-auto" iconPosition="left">
+            <p-inputicon>
+              <i class="pi pi-search"></i>
+            </p-inputicon>
+            <input
+              #filterInput
+              [placeholder]="t('configFiles.search')"
+              (input)="dt.filterGlobal(filterInput.value, 'contains')"
+              pInputText
+              type="text"
+            />
+          </p-iconfield>
+        </div>
+      </ng-template>
+
+      <ng-template #header>
+        <tr>
+          <th>{{ t('configFiles.name') }}</th>
+          <th>{{ t('configFiles.path') }}</th>
+          <th>{{ t('configFiles.description') }}</th>
+          <th class="w-32">{{ t('configFiles.wiki') }}</th>
+          <th class="w-32">{{ t('configFiles.actions') }}</th>
+        </tr>
+      </ng-template>
+
+      <ng-template #groupheader let-file>
+        <tr pRowGroupHeader>
+          <td colspan="5">
+            <span class="font-bold ml-2 text-color-emphasis">{{ file.category }}</span>
+          </td>
+        </tr>
+      </ng-template>
+
+      <ng-template #body let-file>
+        <tr>
+          <td>
+            <span class="flex items-center gap-2">
+              <span>{{ file.name }}</span>
+              @if (file.directory) {
+                <i class="pi pi-folder text-primary" aria-hidden="true"></i>
+              }
+            </span>
+          </td>
+          <td class="font-mono text-sm">{{ file.path }}</td>
+          <td>{{ t(file.description) }}</td>
+          <td>
+            @if (file.wikiLink) {
+              <button
+                [text]="true"
+                pButton
+                pTooltip="Arch Wiki"
+                tooltipPosition="top"
+                (click)="shellService.open(file.wikiLink)"
+              >
+                <i class="pi pi-external-link"></i>
+              </button>
+            }
+          </td>
+          <td>
+            <button [outlined]="true" pButton size="small" (click)="editConfig(file)">
+              <i class="pi pi-pencil"></i> {{ t('configFiles.edit') }}
+            </button>
+          </td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </div>
+
+  <p-dialog
+    [header]="selectedDirectory()?.name || t('configFiles.title')"
+    [modal]="true"
+    [style]="{ width: '70vw' }"
+    [visible]="directoryDialogVisible()"
+    (visibleChange)="directoryDialogVisible.set($event)"
+    (onHide)="closeDirectoryDialog()"
+  >
+    <p-table [value]="directoryFiles()" dataKey="path">
+      <ng-template #header>
+        <tr>
+          <th>{{ t('configFiles.name') }}</th>
+          <th>{{ t('configFiles.path') }}</th>
+          <th>{{ t('configFiles.description') }}</th>
+          <th class="w-32">{{ t('configFiles.wiki') }}</th>
+          <th class="w-32">{{ t('configFiles.actions') }}</th>
+        </tr>
+      </ng-template>
+
+      <ng-template #body let-file>
+        <tr>
+          <td>
+            <span class="flex items-center gap-2">
+              @if (file.directory) {
+                <i class="pi pi-folder text-primary" aria-hidden="true"></i>
+              }
+              <span>{{ file.name }}</span>
+            </span>
+          </td>
+          <td class="font-mono text-sm">{{ file.path }}</td>
+          <td>{{ t(file.description) }}</td>
+          <td>
+            @if (file.wikiLink) {
+              <button
+                [text]="true"
+                pButton
+                pTooltip="Arch Wiki"
+                tooltipPosition="top"
+                (click)="shellService.open(file.wikiLink)"
+              >
+                <i class="pi pi-external-link"></i>
+              </button>
+            }
+          </td>
+          <td>
+            <button [outlined]="true" pButton size="small" (click)="editConfig(file)">
+              <i class="pi pi-pencil"></i> {{ t('configFiles.edit') }}
+            </button>
+          </td>
+        </tr>
+      </ng-template>
+    </p-table>
+  </p-dialog>
+</ng-container>

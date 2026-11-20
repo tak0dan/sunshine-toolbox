@@ -1,0 +1,172 @@
+<ng-container *transloco="let t">
+  <div class="background-filter">
+    <div class="background non-blurred">
+      <sunshine-shell id="shellBar" [menuItems]="menubarModel()">
+        <div sunshineShellBarEnd>
+          @if (loadingService.loading()) {
+            <p-progress-spinner
+              [style]="{
+                'width': '1.5rem',
+                'height': '1.5rem',
+                'vertical-align': 'middle',
+                'margin-right': '1rem',
+              }"
+              strokeWidth="10"
+              ariaLabel="loading"
+            />
+          }
+
+          <p-autocomplete
+            [(ngModel)]="selectedModule"
+            [ngClass]="{
+              'ng-dirty ng-invalid': selectedModule() !== '' && moduleSuggestions().length === 0,
+            }"
+            [placeholder]="t('menu.modules.search')"
+            [forceSelection]="true"
+            [suggestions]="moduleSuggestions()"
+            (completeMethod)="filterModuleSuggestions($event)"
+            (onSelect)="selectModule($event)"
+            sunshineShellBarEnd
+            size="small"
+            optionLabel="moduleName"
+          >
+            <ng-template #item let-module>
+              <div class="flex items-center gap-2">
+                <div>{{ t(module.moduleName) }}</div>
+              </div>
+            </ng-template>
+          </p-autocomplete>
+
+          @if (taskManager.count() > 0) {
+            <p-splitbutton
+              class="sunshine-button-shine ml-2 animate-shine"
+              [model]="applyMenuItems"
+              (onClick)="taskManager.toggleTerminal(true)"
+              sunshineShellBarEnd
+              severity="secondary"
+              size="small"
+            >
+              <ng-template #content>
+                {{ t('menu.pending') }}
+              </ng-template>
+            </p-splitbutton>
+          }
+        </div>
+        <div class="mt-5 route-container">
+          <router-outlet />
+        </div>
+        <p-scroll-top />
+      </sunshine-shell>
+      <button class="app-mobile-menu-toggle" type="button" (click)="toggleMobileMenu()" aria-label="Menu">
+        @if (!mobileMenuVisible()) {
+          <i class="pi pi-bars"></i>
+        } @else {
+          <i class="pi pi-times"></i>
+        }
+      </button>
+      @if (mobileMenuVisible()) {
+        <div
+          class="app-mobile-menu-backdrop"
+          (click)="mobileMenuVisible.set(false)"
+          (keyup.enter)="mobileMenuVisible.set(false)"
+          tabindex="0"
+          role="button"
+          aria-label="Close menu"
+        ></div>
+        <div class="app-mobile-menu-panel">
+          @for (item of menuItems(); track item.id) {
+            <div
+              class="app-mobile-menu-item"
+              (click)="executeMobileItem(item)"
+              (keyup.enter)="executeMobileItem(item)"
+              tabindex="0"
+              role="button"
+            >
+              <i [class]="item.icon"></i>
+              <span>{{ item.label }}</span>
+              @if (item.items && item.items.length > 0) {
+                <i
+                  class="pi pi-angle-down app-mobile-chevron"
+                  [class.rotated]="expandedMobileSection() === item.id"
+                ></i>
+              }
+            </div>
+            @if (item.items && item.items.length > 0 && expandedMobileSection() === item.id) {
+              <div class="app-mobile-menu-submenu">
+                @for (sub of item.items; track sub.id) {
+                  <div
+                    class="app-mobile-menu-subitem"
+                    (click)="executeMobileItem(sub)"
+                    (keyup.enter)="executeMobileItem(sub)"
+                    tabindex="0"
+                    role="button"
+                  >
+                    <i [class]="sub.icon"></i>
+                    <span>{{ sub.label }}</span>
+                  </div>
+                }
+              </div>
+            }
+          }
+        </div>
+      }
+    </div>
+
+    <p-menu
+      #dropdownMenu
+      [model]="dropdownModel()"
+      [class.sunshine-shell__dropdown--visible]="dropdownVisible()"
+      [style.display]="dropdownVisible() ? 'block' : 'none'"
+      [style.top.px]="dropdownTop()"
+      [style.left.px]="dropdownLeft()"
+      class="sunshine-shell__dropdown"
+      (click)="dropdownVisible.set(false)"
+    />
+
+    <p-confirm-dialog />
+    <p-context-menu [model]="rightClickMenu()" [global]="true" />
+
+    <toolbox-console #consoleComponent />
+    <toolbox-operation-manager #operationManagerComponent />
+    <toolbox-command-palette />
+
+    <p-dialog
+      [header]="t('menu.help.about')"
+      [modal]="true"
+      [style]="{ width: '32rem', maxWidth: '95vw' }"
+      [visible]="aboutDialogVisible()"
+      (visibleChange)="aboutDialogVisible.set($event)"
+      appendTo="body"
+    >
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col items-center gap-3 text-center">
+          <img src="/assets/sunshine.svg" alt="Sunshine" class="h-20 w-20 shrink-0" height="400" width="400" />
+          <div class="text-sm font-medium">{{ t('menu.help.aboutVersion', { version: appVersion() }) }}</div>
+        </div>
+        <p class="text-sm leading-relaxed">{{ t('menu.help.aboutBody') }}</p>
+        <div class="flex flex-wrap gap-2 text-sm">
+          <a
+            class="text-primary hover:underline"
+            href="https://github.com/tak0dan/sunshine-toolbox"
+            target="_blank"
+            rel="noopener"
+            >{{ t('menu.help.aboutSourceCode') }}</a
+          >
+          <span class="text-surface-300">·</span>
+          <a class="text-primary hover:underline" href="https://github.com/tak0dan/SunshineOS/discussions" target="_blank" rel="noopener"
+            >{{ t('menu.help.aboutForum') }}</a
+          >
+          <span class="text-surface-300">·</span>
+          <a class="text-primary hover:underline" href="https://github.com/tak0dan/SunshineOS/wiki" target="_blank" rel="noopener"
+            >{{ t('menu.help.aboutWiki') }}</a
+          >
+        </div>
+      </div>
+      <ng-template #footer>
+        <button pButton severity="secondary" (click)="aboutDialogVisible.set(false)">
+          {{ t('confirmation.accept') }}
+        </button>
+      </ng-template>
+    </p-dialog>
+  </div>
+</ng-container>

@@ -1,0 +1,332 @@
+import {
+  type AfterViewInit,
+  Component,
+  computed,
+  effect,
+  inject,
+  type OnInit,
+  type Signal,
+  viewChild,
+} from '@angular/core';
+import { Card } from '@openng/optimus-ui/card';
+import { Tooltip } from '@openng/optimus-ui/tooltip';
+import { TranslocoDirective, TranslocoService } from '@jsverse/transloco';
+import { SunshineTerminalTheme } from '../../theme';
+import type { ITerminalOptions, ITheme } from '@xterm/xterm';
+import { clear, writeText } from '../../electron-services';
+import { MessageToastService } from '../../sunshine-core/index.js';
+import { SunshineBin } from '../privatebin/privatebin';
+import { type NgTerminal, NgTerminalModule } from 'ng-terminal';
+import { LoadingService } from '../loading-indicator/loading-indicator.service';
+import { ConfigService } from '../config/config.service';
+import { Logger } from '../../logging/logging';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { TaskManagerService } from '../task-manager/task-manager.service';
+import { Router, type UrlTree } from '@angular/router';
+import { TerminalThemeService } from '../console/terminal-theme.service';
+import { ButtonDirective } from '@openng/optimus-ui/button';
+
+@Component({
+  selector: 'toolbox-diagnostics',
+  imports: [ButtonDirective, Card, Tooltip, TranslocoDirective, NgTerminalModule],
+  templateUrl: './diagnostics.component.html',
+  styleUrl: './diagnostics.component.css',
+})
+export class DiagnosticsComponent implements AfterViewInit, OnInit {
+  private outputCache = '';
+
+  readonly term = viewChild<NgTerminal>('term');
+
+  private readonly configService = inject(ConfigService);
+  private readonly terminalThemeService = inject(TerminalThemeService);
+  private readonly sunshineBin = inject(SunshineBin);
+  private readonly loadingService = inject(LoadingService);
+  private readonly logger = Logger.getInstance();
+  private readonly messageToastService = inject(MessageToastService);
+  private readonly translocoService = inject(TranslocoService);
+  private readonly taskManagerService = inject(TaskManagerService);
+  private readonly router = inject(Router);
+
+  diagnosticTools = [
+    {
+      id: 'inxi',
+      label: 'diagnostics.inxi',
+      icon: 'info-circle',
+      description: 'diagnostics.inxiDesc',
+    },
+    {
+      id: 'sunshine-doctor',
+      label: 'diagnostics.health',
+      icon: 'heart',
+      description: 'diagnostics.healthDesc',
+    },
+    {
+      id: 'systemd-analyze',
+      label: 'diagnostics.systemctl',
+      icon: 'chart-bar',
+      description: 'diagnostics.systemctlDesc',
+    },
+    {
+      id: 'journalctl',
+      label: 'diagnostics.journalctl',
+      icon: 'list',
+      description: 'diagnostics.journalctlDesc',
+    },
+    {
+      id: 'pacman',
+      label: 'diagnostics.pacman',
+      icon: 'box',
+      description: 'diagnostics.pacmanDesc',
+    },
+    {
+      id: 'dmesg',
+      label: 'diagnostics.dmesg',
+      icon: 'exclamation-triangle',
+      description: 'diagnostics.dmesgDesc',
+    },
+    {
+      id: 'full',
+      label: 'diagnostics.full',
+      icon: 'file-import',
+      description: 'diagnostics.fullDesc',
+    },
+    {
+      id: 'upload',
+      label: 'diagnostics.upload',
+      icon: 'upload',
+      description: 'diagnostics.uploadDesc',
+    },
+  ];
+
+  readonly xtermOptions: Signal<ITerminalOptions> = computed(() => {
+    let theme: ITheme = this.configService.settings().darkMode ? SunshineTerminalTheme.dark : SunshineTerminalTheme.light;
+    if (!this.configService.settings().activeTheme.includes('Sunshine Noon')) {
+      const isDarkMode = this.configService.settings().darkMode;
+      theme = this.terminalThemeService.getXtermTheme(isDarkMode);
+    }
+
+    return {
+      disableStdin: false,
+      scrollback: 10000,
+      convertEol: true,
+      theme: theme,
+    };
+  });
+
+  constructor() {
+    effect(() => {
+      const _darkMode: boolean = this.configService.settings().darkMode;
+      const term = this.term();
+      if (term?.underlying) {
+        term.underlying.options.theme = this.xtermOptions().theme;
+      }
+      this.logger.trace('Terminal theme switched via effect');
+    });
+
+    this.logger.debug('Diagnostics component initialized');
+  }
+
+  async ngOnInit(): Promise<void> {
+    const url: UrlTree = this.router.parseUrl(this.router.url);
+    if (!url.queryParams['action']) return;
+
+    if (url.queryParams['action']) {
+      switch (url.queryParams['action']) {
+        case 'inxi':
+        case 'systemd-analyze':
+        case 'journalctl':
+        case 'dmesg':
+        case 'pacman':
+        case 'full-logs':
+          await this.getOutput(url.queryParams['action']);
+          break;
+        default:
+          this.logger.error('Invalid action');
+      }
+      if (url.queryParams['upload'] === 'true') {
+        await this.uploadPrivateBin();
+      }
+    }
+  }
+
+  /**
+   * Set the fragment in the URL.
+   * @param fragment The fragment to navigate to.
+   */
+  navigate(fragment: string) {
+    void this.router.navigate([], { fragment });
+  }
+
+  ngAfterViewInit(): void {
+    this.term()?.underlying?.loadAddon(new WebLinksAddon());
+  }
+
+  /**
+   * Get the full logs for the system and copy them to the clipboard.
+   */
+  async getFullLogs(): Promise<void> {
+    this.logger.debug('Getting full logs');
+    this.loadingService.loadingOn();
+
+    let cmd = '';
+    for (const type of ['inxi', 'systemd-analyze', 'journalctl', 'pacman', 'dmesg', 'sunshine-doctor']) {
+      const command = this.getCommand(type);
+      if (!command) {
+        this.logger.error(`Failed to get command for ${type}`);
+        continue;
+      }
+
+      cmd += `echo "### ${type} ###"; ${command.cmd}; echo "### END ${command.cmd} ###"; echo`;
+    }
+
+    const result = await this.taskManagerService.executeAndWaitBash(`pkexec sh -c '${cmd}'`);
+
+    this.loadingService.loadingOff();
+
+    await this.processResult(result);
+  }
+
+  /**
+   * Upload the output to PrivateBin and copy the URL to the clipboard.
+   */
+  async uploadPrivateBin() {
+    this.logger.trace('Uploading buffer to PrivateBin');
+    this.loadingService.loadingOn();
+
+    const url: string = await this.sunshineBin.sendText(this.outputCache);
+    this.logger.info(`Uploaded to ${url}`);
+
+    await writeText(url);
+    this.messageToastService.info(
+      this.translocoService.translate('diagnostics.success'),
+      this.translocoService.translate('diagnostics.uploadSuccess'),
+    );
+
+    this.loadingService.loadingOff();
+  }
+
+  /**
+   * Get the output for the specified type of diagnostic.
+   * @param type The type of diagnostic to get the output for.
+   */
+  async getOutput(type: string): Promise<void> {
+    this.logger.debug(`Getting output for ${type}`);
+
+    this.loadingService.loadingOn();
+    try {
+      const command = this.getCommand(type);
+      if (!command) {
+        this.messageToastService.error(
+          this.translocoService.translate('diagnostics.failedCmdHeader'),
+          this.translocoService.translate('diagnostics.failedCmd'),
+        );
+        return;
+      }
+
+      this.logger.trace(`Getting output for ${type}`);
+      const result = await this.executeCommand(command.cmd, command.sudo);
+      await this.processResult(result);
+    } catch (err: any) {
+      this.logger.trace(`Error getting output for ${type}: ${err}`);
+    }
+
+    this.logger.trace(`Done getting output for ${type}`);
+    this.loadingService.loadingOff();
+  }
+
+  /**
+   * Process the result of the command execution.
+   * Output is reported even on non-zero exit codes, since tools like
+   * sunshine-doctor use them to signal findings rather than failures.
+   * @param result The result of the command execution
+   */
+  private async processResult(result: any): Promise<void> {
+    const term = this.term();
+    if (!term) return;
+
+    const stdout: string = result.stdout ?? '';
+    const stderr: string = result.stderr ?? '';
+
+    if (stdout.trim() === '' && result.code !== 0) {
+      const reason =
+        stderr.trim() ||
+        this.translocoService.translate('diagnostics.exitCode', { code: result.code }) ||
+        this.translocoService.translate('diagnostics.failedCmd');
+      this.messageToastService.error(this.translocoService.translate('diagnostics.failedCmdHeader'), reason);
+      this.logger.error(`Error collecting output: ${reason}`);
+      return;
+    }
+
+    let report = stdout;
+    if (result.code !== 0) {
+      const failureNotice = `${stderr ? stderr.trimEnd() + '\n' : ''}${this.translocoService.translate('diagnostics.exitCode', { code: result.code })}\n`;
+      report = `${stdout.trimEnd()}\n\n${failureNotice}`;
+      this.logger.warn(`Command exited with code ${result.code}, reporting collected output`);
+    }
+
+    term.underlying?.clear();
+    term.write(report);
+
+    this.outputCache = report;
+
+    if (this.configService.settings().copyDiagnostics) {
+      this.logger.trace('Writing to clipboard');
+      await clear();
+      await writeText(report);
+      this.messageToastService.info(
+        this.translocoService.translate('diagnostics.copySuccess'),
+        this.translocoService.translate('diagnostics.copySuccess'),
+      );
+    }
+  }
+
+  /**
+   * Assemble the command to be executed, optionally with sudo and prompting for the password if needed.
+   * @param command The command to be executed.
+   * @param needsSudo Whether the command needs to be run with sudo.
+   */
+  private async executeCommand(command: string, needsSudo = false): Promise<any> {
+    if (needsSudo) {
+      return await this.taskManagerService.executeAndWaitBash(`pkexec ${command}`);
+    }
+    return await this.taskManagerService.executeAndWaitBash(command);
+  }
+
+  /**
+   * Get the command to be executed based on the type of diagnostic.
+   * @param command The type of diagnostic to get the command for.
+   * @private
+   */
+  private getCommand(command: string): { sudo: boolean; cmd: string } | null {
+    const result = { sudo: false, cmd: '' };
+
+    switch (command) {
+      case 'inxi':
+        result.cmd = 'sunshine-info';
+        break;
+      case 'systemd-analyze':
+        result.cmd = 'systemd-analyze blame --no-pager && systemd-analyze critical-chain --no-pager';
+        break;
+      case 'journalctl':
+        result.cmd = 'journalctl -e --no-pager';
+        result.sudo = true;
+        break;
+      case 'pacman':
+        result.cmd = 'pkexec cat /var/log/pacman.log | tac | awk "!flag; /PACMAN.*pacman/{flag = 1};" | tac';
+        break;
+      case 'dmesg':
+        result.cmd = 'dmesg';
+        result.sudo = true;
+        break;
+      case 'sunshine-doctor':
+        result.cmd = 'sunshine-doctor';
+        result.sudo = true;
+        break;
+      default:
+        this.logger.error('Invalid type');
+        return null;
+    }
+
+    return result;
+  }
+}

@@ -1,0 +1,403 @@
+import { Component, computed, effect, inject, OnInit, signal, untracked } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { TranslocoDirective, TranslocoService } from '@jsverse/transloco';
+import { Card } from '@openng/optimus-ui/card';
+import { Select } from '@openng/optimus-ui/select';
+import { ButtonDirective } from '@openng/optimus-ui/button';
+import { RadioButton } from '@openng/optimus-ui/radiobutton';
+import { PasswordDirective } from '@openng/optimus-ui/password';
+import { ConfirmationService } from '@openng/optimus-ui/api';
+import { BootRepairService } from './boot-repair.service';
+import { PartitionInfo } from '../boot-options/types';
+import { MessageToastService } from '../../sunshine-core/index.js';
+import { dialogOpen, dialogSave } from '../../electron-services/electron-api-utils.js';
+import { BackupRestoreTarget, BootInstallTarget, BootRepairAction, DiskInfo } from './types';
+import { ConfigService } from '../config/config.service';
+import { LoadingService } from '../loading-indicator/loading-indicator.service';
+import { Tooltip } from '@openng/optimus-ui/tooltip';
+
+@Component({
+  selector: 'toolbox-boot-repair',
+  imports: [
+    CommonModule,
+    FormsModule,
+    TranslocoDirective,
+    Card,
+    Select,
+    ButtonDirective,
+    RadioButton,
+    PasswordDirective,
+    Tooltip,
+  ],
+  templateUrl: './boot-repair.component.html',
+  styleUrl: './boot-repair.component.css',
+})
+export class BootRepairComponent implements OnInit {
+  private readonly bootRepairService = inject(BootRepairService);
+  private readonly toast = inject(MessageToastService);
+  private readonly confirmationService = inject(ConfirmationService);
+  private readonly configService = inject(ConfigService);
+  private readonly loadingService = inject(LoadingService);
+  protected readonly transloco = inject(TranslocoService);
+
+  private readonly luksRootMap = signal<Record<string, boolean>>({});
+  private readonly luksMapperPathMap = signal<Record<string, string>>({});
+
+  readonly loading = signal(true);
+  readonly disks = signal<DiskInfo[]>([]);
+  readonly partitions = signal<PartitionInfo[]>([]);
+  readonly linuxPartitions = signal<PartitionInfo[]>([]);
+  readonly espPartitions = signal<PartitionInfo[]>([]);
+  readonly isUefi = signal(false);
+
+  readonly action = signal<BootRepairAction>('reinstall');
+  readonly installTarget = signal<BootInstallTarget>('root');
+  readonly backupRestoreTarget = signal<BackupRestoreTarget>('mbr');
+
+  readonly selectedLocation = signal<string | null>(null);
+  readonly selectedRoot = signal<string | null>(null);
+  readonly currentRootPartition = signal<string>('');
+  readonly luksPassword = signal('');
+  readonly selectedRootIsLuks = computed(() => {
+    const root = this.selectedRoot();
+    return root ? this.luksRootMap()[root] : false;
+  });
+  readonly isCurrentInstalledRoot = computed(() => {
+    const selectedRoot = this.selectedRoot();
+    if (this.configService.state().isLiveSystem !== false || !selectedRoot) {
+      return false;
+    }
+
+    const selectedRootPath = '/dev/' + selectedRoot;
+    const current = this.currentRootPartition();
+    const selectedNorm = this.normalizeDevice(selectedRootPath);
+    const currentNorm = this.normalizeDevice(current);
+
+    if (selectedNorm === currentNorm) {
+      return true;
+    }
+
+    if (current.startsWith('/dev/mapper/luks-')) {
+      const expectedMapperPath = this.luksMapperPathMap()[selectedRoot] || '';
+      return expectedMapperPath.length > 0 && this.normalizeDevice(expectedMapperPath) === currentNorm;
+    }
+
+    return false;
+  });
+  readonly shouldShowLuksPrompt = computed(() => this.selectedRootIsLuks() && !this.isCurrentInstalledRoot());
+
+  readonly locations = signal<{ label: string; value: string }[]>([]);
+  readonly roots = signal<{ label: string; value: string }[]>([]);
+
+  private formatRootOption(partition: PartitionInfo): { label: string; value: string } {
+    const luksSuffix = this.luksRootMap()[partition.name]
+      ? ' [' + this.transloco.translate('bootRepair.luksTag') + ']'
+      : '';
+
+    const parts: string[] = [partition.name, `(${partition.size})`];
+    if (partition.fstype) {
+      parts.push(`${partition.fstype}`);
+    }
+    if (partition.mountpoint) {
+      parts.push(`@ ${partition.mountpoint}`);
+    }
+    if (partition.label) {
+      parts.push(`- ${partition.label}`);
+    }
+
+    return {
+      label: parts.join(' ') + luksSuffix,
+      value: partition.name,
+    };
+  }
+
+  private normalizeDevice(device: string): string {
+    const normalized = device
+      .trim()
+      .replace(/\[.*]$/, '')
+      .replace('/dev/', '')
+      .trim();
+
+    if (normalized.startsWith('mapper/luks-')) {
+      return normalized.replace(/^mapper\/luks-/, 'luks-');
+    }
+
+    return normalized;
+  }
+
+  private async refreshCurrentRootPartition(): Promise<void> {
+    if (this.configService.state().isLiveSystem !== false) {
+      this.currentRootPartition.set('');
+      return;
+    }
+
+    const currentRootPartition = await this.bootRepairService.getCurrentRootPartition();
+    this.currentRootPartition.set(currentRootPartition);
+  }
+
+  constructor() {
+    effect(() => {
+      const isLiveSystem = this.configService.state().isLiveSystem;
+      if (isLiveSystem === false && this.currentRootPartition().length === 0) {
+        void this.refreshCurrentRootPartition();
+      }
+    });
+
+    effect(() => {
+      const act = this.action();
+      const target = this.installTarget();
+      const backupTarget = this.backupRestoreTarget();
+      const parts = this.partitions();
+      const linuxParts = this.linuxPartitions();
+      const dsks = this.disks();
+
+      untracked(() => {
+        const rootOptions = linuxParts.map((p) => this.formatRootOption(p));
+        const mbrOptions = dsks.filter((d) => !/^zram\d+$/i.test(d.name));
+        const partOptions = this.mapPartitionsToLabelValue(parts);
+        this.roots.set(rootOptions);
+
+        if (act === 'repair' || act === 'backup' || act === 'restore') {
+          if (act === 'backup' || act === 'restore') {
+            if (backupTarget === 'mbr') {
+              this.locations.set(
+                mbrOptions.map((d) => ({
+                  label: d.name + ' (' + d.size + ')' + (d.model ? ' - ' + d.model : ''),
+                  value: d.name,
+                })),
+              );
+            } else {
+              this.locations.set(partOptions);
+            }
+          } else {
+            this.locations.set(rootOptions);
+          }
+          return;
+        }
+
+        if (target === 'mbr') {
+          this.locations.set(
+            mbrOptions.map((d) => ({
+              label: d.name + ' (' + d.size + ')' + (d.model ? ' - ' + d.model : ''),
+              value: d.name,
+            })),
+          );
+        } else if (target === 'esp') {
+          this.locations.set(this.mapPartitionsToLabelValue(this.espPartitions()));
+        } else {
+          this.locations.set(rootOptions);
+        }
+
+        const locationValues = new Set(this.locations().map((option) => option.value));
+        const selectedLocation = this.selectedLocation();
+        if (!selectedLocation || !locationValues.has(selectedLocation)) {
+          this.selectedLocation.set(this.locations()[0]?.value ?? null);
+        }
+
+        if (this.selectedRoot() && this.isCurrentInstalledRoot()) {
+          this.luksPassword.set('');
+        }
+      });
+    });
+  }
+
+  async ngOnInit(): Promise<void> {
+    await this.loadDevices();
+  }
+
+  async loadDevices(): Promise<void> {
+    this.loading.set(true);
+    try {
+      const [disks, partitionsWithType, isUefi] = await Promise.all([
+        this.bootRepairService.getDisks(),
+        this.bootRepairService.getPartitionsWithPartType(),
+        this.bootRepairService.isUefiSystem(),
+      ]);
+      this.disks.set(disks);
+      this.isUefi.set(isUefi);
+
+      const linuxParts: PartitionInfo[] = [];
+      const espParts: PartitionInfo[] = [];
+      const luksMap: Record<string, boolean> = {};
+      const mapperMap: Record<string, string> = {};
+      for (const p of partitionsWithType) {
+        const partType = p.parttype.toLowerCase();
+        if (
+          /^(0x83|0fc63daf-8483-4772-8e79-3d69d8477de4|44479540-f297-41b2-9af7-d131d5f0458a|4f68bce3-e8cd-4db1-96e7-fbcaf984b709)$/i.test(
+            partType,
+          )
+        ) {
+          linuxParts.push(p);
+          const isLuks =
+            (p.fstype || '').toLowerCase().includes('crypto_luks') || (await this.bootRepairService.isLuks(p.name));
+          luksMap[p.name] = isLuks;
+          if (isLuks) {
+            mapperMap[p.name] = await this.bootRepairService.getLuksMapperPath('/dev/' + p.name);
+          }
+        } else if (/^c12a7328-f81f-11d2-ba4b-00a0c93ec93b$/i.test(partType)) {
+          espParts.push(p);
+        }
+      }
+      this.luksRootMap.set(luksMap);
+      this.luksMapperPathMap.set(mapperMap);
+      this.partitions.set(partitionsWithType);
+      this.linuxPartitions.set(linuxParts);
+      this.espPartitions.set(espParts);
+
+      this.roots.set(linuxParts.map((p) => this.formatRootOption(p)));
+
+      if (this.action() === 'reinstall') {
+        this.installTarget.set(isUefi && espParts.length > 0 ? 'esp' : 'root');
+      }
+
+      const rootGuess = linuxParts.find((p) => p.label.includes('rootSunshine')) || linuxParts[0];
+      if (rootGuess) {
+        this.selectedRoot.set(rootGuess.name);
+      }
+
+      this.selectedLocation.set(null);
+
+      await this.refreshCurrentRootPartition();
+    } catch (e) {
+      this.toast.error(this.transloco.translate('bootRepair.errorTitle'), String(e));
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  async apply(): Promise<void> {
+    const act = this.action();
+    const loc = this.selectedLocation();
+    const root = this.selectedRoot();
+    const selectedRootPath = root ? '/dev/' + root : '';
+
+    if (!loc) {
+      this.toast.error(
+        this.transloco.translate('bootRepair.errorTitle'),
+        this.transloco.translate('bootRepair.selectLocation'),
+      );
+      return;
+    }
+
+    const isCurrentInstalledRoot = this.isCurrentInstalledRoot();
+    if (
+      (act === 'repair' || act === 'reinstall') &&
+      this.selectedRootIsLuks() &&
+      !isCurrentInstalledRoot &&
+      this.luksPassword().length === 0
+    ) {
+      this.toast.error(
+        this.transloco.translate('bootRepair.errorTitle'),
+        this.transloco.translate('bootRepair.luksPasswordRequired'),
+      );
+      return;
+    }
+
+    const actionSuccessMap: Record<BootRepairAction, string> = {
+      reinstall: 'bootRepair.successReinstall',
+      repair: 'bootRepair.successRepair',
+      backup: 'bootRepair.successBackup',
+      restore: 'bootRepair.successRestore',
+    };
+
+    this.loadingService.loadingOn();
+    try {
+      if (act === 'repair') {
+        if (!root) {
+          this.toast.error(
+            this.transloco.translate('bootRepair.errorTitle'),
+            this.transloco.translate('bootRepair.selectRoot'),
+          );
+          return;
+        }
+        await this.bootRepairService.repairGrub(
+          selectedRootPath,
+          this.selectedRootIsLuks() && !isCurrentInstalledRoot ? this.luksPassword() : undefined,
+        );
+      } else if (act === 'reinstall') {
+        if (!root) {
+          this.toast.error(
+            this.transloco.translate('bootRepair.errorTitle'),
+            this.transloco.translate('bootRepair.selectRoot'),
+          );
+          return;
+        }
+        await this.bootRepairService.installGrub(
+          selectedRootPath,
+          loc,
+          this.installTarget() === 'esp',
+          this.selectedRootIsLuks() && !isCurrentInstalledRoot ? this.luksPassword() : undefined,
+        );
+      } else if (act === 'backup') {
+        const result = await dialogSave({
+          properties: ['showOverwriteConfirmation'],
+          filters: [{ name: this.transloco.translate('bootRepair.backupFile'), extensions: ['img', 'bin'] }],
+        });
+        if (result && result.length > 0) {
+          await this.bootRepairService.backupMbr(loc, result);
+        } else {
+          return;
+        }
+      } else if (act === 'restore') {
+        const result = await dialogOpen({
+          properties: ['openFile'],
+          filters: [{ name: this.transloco.translate('bootRepair.backupFile'), extensions: ['img', 'bin'] }],
+        });
+        if (result && result.length > 0) {
+          await this.bootRepairService.restoreMbr(loc, result[0]);
+        } else {
+          return;
+        }
+      }
+
+      await this.showMessageBox(
+        this.transloco.translate('bootRepair.successTitle'),
+        this.transloco.translate(actionSuccessMap[act]),
+        'success',
+      );
+    } catch (e) {
+      const details = e instanceof Error ? e.message : String(e);
+      await this.showMessageBox(this.transloco.translate('bootRepair.errorTitle'), details, 'error');
+    } finally {
+      this.loadingService.loadingOff();
+    }
+  }
+
+  private showMessageBox(title: string, message: string, type: 'success' | 'error'): Promise<void> {
+    return new Promise((resolve) => {
+      this.confirmationService.confirm({
+        header: title,
+        message,
+        icon: type === 'success' ? 'pi pi-check-circle' : 'pi pi-times-circle',
+        closable: false,
+        closeOnEscape: false,
+        rejectVisible: false,
+        acceptButtonProps: {
+          label: this.transloco.translate('confirmation.accept'),
+          severity: type === 'success' ? 'success' : 'danger',
+        },
+        accept: () => resolve(),
+      });
+    });
+  }
+
+  onRootChange(): void {
+    if (!this.selectedRootIsLuks() || this.isCurrentInstalledRoot()) {
+      this.luksPassword.set('');
+    }
+  }
+
+  private mapPartitionsToLabelValue(parts: PartitionInfo[]) {
+    return parts.map((p) => {
+      const partParts: string[] = [p.name, `(${p.size})`];
+      if (p.fstype) partParts.push(`${p.fstype}`);
+      if (p.mountpoint) partParts.push(`@ ${p.mountpoint}`);
+      if (p.label) partParts.push(`- ${p.label}`);
+      return {
+        label: partParts.join(' '),
+        value: p.name,
+      };
+    });
+  }
+}

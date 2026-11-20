@@ -1,0 +1,43 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "assignees": ["tak0dan"],
+  "commitMessageAction": "update",
+  "extends": [
+    "config:recommended",
+    ":gitSignOff",
+    ":ignoreModulesAndTests",
+    ":semanticPrefixFixDepsChoreOthers",
+    "group:monorepos",
+    "group:recommended",
+    "replacements:all",
+    "workarounds:all"
+  ],
+  "lockFileMaintenance": {
+    "automerge": true,
+    "enabled": true,
+    "extends": ["schedule:weekly"]
+  },
+  "packageRules": [
+    {
+      "automerge": false,
+      "enabled": true,
+      "groupName": "All patch dependencies",
+      "groupSlug": "all-patch",
+      "matchPackageNames": ["*"],
+      "matchUpdateTypes": ["patch"]
+    },
+    {
+      "enabled": false,
+      "groupName": "Nx-managed dependencies",
+      "groupSlug": "nx-managed",
+      "matchPackageNames": ["@angular/**", "@angular-devkit/**", "@nx/**"]
+    },
+    {
+      "enabled": false,
+      "groupName": "Typescript",
+      "groupSlug": "typescript",
+      "matchPackageNames": ["typescript"]
+    }
+  ],
+  "reviewersFromCodeOwners": true
+}

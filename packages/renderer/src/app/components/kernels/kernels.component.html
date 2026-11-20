@@ -1,0 +1,112 @@
+<ng-container *transloco="let t">
+  <div class="my-5 text-center">
+    <p-tag severity="success">
+      <div class="flex items-center gap-2 px-1">
+        <span>{{ t('kernels.active') }}</span>
+        <span>
+          {{ configService.state().kernel }}
+        </span>
+      </div>
+    </p-tag>
+    <button class="ml-5" [text]="true" pButton severity="help" size="small" (click)="navigateToDefaultKernel()">
+      <i class="pi pi-hammer"></i> {{ t('kernels.setDefault') }}
+    </button>
+    @if (kernelsService.headersMissing()) {
+      <p-tag
+        class="ml-5 cursor-pointer"
+        [value]="t('kernels.headersMissing')"
+        (click)="installMissingHeaders(true)"
+        icon="pi pi-info-circle"
+        severity="danger"
+      />
+    }
+    @if (kernelsService.dkmsModulesBroken()) {
+      <p-tag
+        class="ml-5 cursor-pointer"
+        [value]="t('kernels.dkmsModulesBroken')"
+        (click)="reinstallDkmsModules(true, 'broken')"
+        icon="pi pi-info-circle"
+        severity="danger"
+      />
+    }
+    @if (kernelsService.dkmsModulesMissing()) {
+      <p-tag
+        class="ml-5 cursor-pointer"
+        [value]="t('kernels.dkmsModulesMissing')"
+        (click)="reinstallDkmsModules(true, 'missing')"
+        icon="pi pi-info-circle"
+        severity="danger"
+      />
+    }
+  </div>
+  @if (kernelsService.loading()) {
+    <div class="flex flex-col gap-4 p-4">
+      @for (i of counterArray(10); track $index) {
+        <div class="flex items-center justify-between gap-4">
+          <p-skeleton width="12rem" height="2.5rem" />
+          <p-skeleton width="6rem" height="2rem" />
+        </div>
+      }
+    </div>
+  } @else {
+    <p-data-view [value]="kernelsService.kernels()" [paginator]="true" [rows]="10" [rowsPerPageOptions]="[10, 15, 20]">
+      <ng-template #list let-kernels>
+        <div class="grid-nogutter grid grid-cols-12 gap-4">
+          @for (kernel of kernels; track kernel.pkgname[0]) {
+            <div class="col-span-12">
+              <div class="flex flex-col gap-4 p-6 sm:flex-row sm:items-center">
+                <div>
+                  <p-check-box
+                    class="mr-5"
+                    [(ngModel)]="kernel.selected"
+                    [binary]="true"
+                    (onChange)="togglePackage(kernel)"
+                  />
+                </div>
+                <div class="flex flex-1 flex-col justify-between gap-6 md:flex-row md:items-center">
+                  <div class="flex flex-row items-start justify-between gap-2 md:flex-col">
+                    <div>
+                      <span class="text-lg font-medium text-primary">{{ kernel.pkgname[0] }}</span>
+                      <div class="text-secondary mt-2 text-sm font-medium">
+                        {{ kernel.description }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex flex-row items-center justify-between gap-2 md:flex-col">
+                    <p-tag class="mr-2" [value]="kernel.version" />
+                    @if (kernel.selected && kernel.headersSelected) {
+                      <p-tag class="mx-1" [value]="t('kernels.headers')" severity="success" />
+                    } @else if (kernel.initialState && kernel.selected && !kernel.headersSelected) {
+                      <p-tag
+                        class="mx-1 cursor-pointer"
+                        [pTooltip]="t('kernels.headersMissingTip')"
+                        [tooltipOptions]="{ appendTo: 'body', tooltipPosition: 'bottom' }"
+                        [value]="t('kernels.headers')"
+                        (click)="installMissingHeaders(kernel)"
+                        icon="pi pi-info-circle"
+                        severity="danger"
+                      />
+                    }
+                    @if (kernel.initialState && kernel.dkmsModulesMissing.length > 0) {
+                      @for (module of kernel.dkmsModulesMissing; track module) {
+                        <p-tag
+                          class="mx-1 cursor-pointer"
+                          [pTooltip]="t('kernels.dkmsModulesMissingTip')"
+                          [tooltipOptions]="{ appendTo: 'body', tooltipPosition: 'bottom' }"
+                          [value]="module"
+                          (click)="reinstallDkmsModules(kernel, 'missing')"
+                          icon="pi pi-info-circle"
+                          severity="danger"
+                        />
+                      }
+                    }
+                  </div>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+      </ng-template>
+    </p-data-view>
+  }
+</ng-container>
